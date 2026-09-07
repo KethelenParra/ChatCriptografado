@@ -1,16 +1,32 @@
-"""Protocolo de enquadramento sobre TCP Socket.
+"""Protocolo de enquadramento (framing) e serialização de dados sobre TCP Socket.
 
-TCP é um fluxo contínuo de bytes: um único recv() pode devolver só
-parte da mensagem, ou juntar várias. Por isso cada pacote começa com
-um cabeçalho de 4 bytes (tamanho em big-endian) seguido do JSON UTF-8.
+Fundamentação de Redes e Protocolos:
+    O protocolo TCP (Transmission Control Protocol, RFC 793) opera na camada de transporte
+    como um fluxo contínuo e não estruturado de bytes (byte-stream). Ao contrário de protocolos
+    orientados a datagramas (como UDP), o TCP não preserva os limites de aplicação das mensagens.
+    
+    Problema do Streaming TCP:
+        - Fragmentação: Uma chamada `sendall()` pode ser dividida em múltiplos segmentos TCP pelo kernel.
+        - Aglutinação: Várias chamadas `sendall()` consecutivas podem ser agregadas em um único segmento
+          (por exemplo, através do algoritmo de Nagle).
+        - Consequência: Uma simples chamada `recv(buffer_size)` pode retornar apenas uma fração do pacote
+          ou concatenar partes de mensagens sucessivas.
 
-Formato:
+    Solução por Enquadramento de Tamanho Fixo (Length-Prefixed Framing):
+        Para restabelecer o limite exato de cada mensagem na camada de aplicação, este projeto
+        adota um enquadramento composto por:
+        
+        [ 4 Bytes de Cabeçalho ] [ Payload JSON codificado em UTF-8 ]
+        
+        1. Cabeçalho (4 bytes): Um inteiro não assinado de 32 bits em ordem de rede
+           (big-endian), representando exatamente a quantidade N de bytes do payload subsequente.
+        2. Payload (N bytes): String JSON serializada em UTF-8 contendo os dados do pacote.
 
-    [4 bytes com o tamanho][payload JSON]
-
-Somente a chave pública pode ser compartilhada. A chave privada nunca
-entra no JSON. Em mensagens, o TCP transporta só o ciphertext em Base64;
-Base64 não é criptografia, apenas representação textual dos bytes RSA.
+Garantias de Segurança do Protocolo:
+    1. Confidencialidade: O texto em claro da mensagem (plaintext) JAMAIS é inserido nos pacotes TCP.
+       Campos proibidos como 'message', 'plaintext', 'original' ou 'texto' são rejeitados ativamente.
+    2. Chaves Privadas: O envio de chaves privadas é categoricamente bloqueado por filtros de inspeção.
+    3. Tipagem Estrita: Apenas pacotes válidos e previstos pelo protocolo são aceitos.
 """
 
 from __future__ import annotations
@@ -18,19 +34,26 @@ from __future__ import annotations
 import json
 import socket
 
+# Tamanho fixo do cabeçalho de enquadramento em bytes (inteiro 32 bits = 4 bytes)
 HEADER_SIZE = 4
+
+# Tamanho máximo permitido para o payload JSON (1 MB), prevenindo ataques de esgotamento de memória (DoS)
 MAX_PAYLOAD_BYTES = 1_000_000
 
+# Tipos oficiais de pacotes suportados pelo protocolo da aplicação
 PACKET_PUBLIC_KEY = "public_key"
 PACKET_ENCRYPTED_MESSAGE = "encrypted_message"
 PACKET_DISCONNECT = "disconnect"
 PACKET_MESSAGE_ACK = "message_ack"
 
-# Campos obrigatórios do ciphertext. message_id é opcional para
-# compatibilidade com os scripts de terminal, e obrigatório no runtime GUI.
+# Campos obrigatórios e permitidos no pacote de mensagem criptografada
 ENCRYPTED_MESSAGE_REQUIRED_FIELDS = ("type", "sender", "recipient", "ciphertext")
 ENCRYPTED_MESSAGE_ALLOWED_FIELDS = ENCRYPTED_MESSAGE_REQUIRED_FIELDS + ("message_id",)
+
+# Campos do pacote de confirmação de descriptografia (ACK)
 MESSAGE_ACK_FIELDS = ("type", "message_id", "sender", "recipient", "status")
+
+# Lista de campos expressamente proibidos em pacotes de rede para impedir vazamento de texto em claro ou chaves
 FORBIDDEN_PLAINTEXT_FIELDS = (
     "message",
     "plaintext",
@@ -41,15 +64,26 @@ FORBIDDEN_PLAINTEXT_FIELDS = (
 
 
 class ProtocolError(Exception):
-    """Erro no enquadramento, no JSON ou no conteúdo do pacote TCP."""
+    """Exceção para erros de enquadramento de rede, desserialização JSON ou violação de segurança do protocolo."""
 
 
 def recv_exact(connection: socket.socket, number_of_bytes: int) -> bytes:
-    """Lê exatamente number_of_bytes do socket, possivelmente em vários recv().
+    """Lê do socket TCP exatamente a quantidade especificada de bytes, acumulando fragmentos.
 
-    recv() sozinho não garante a mensagem inteira. Esta função junta os
-    pedaços até completar o tamanho pedido. Se o peer fechar a conexão
-    no meio do pacote, a leitura é interrompida com erro claro.
+    Como a chamada nativa `recv()` não garante a devolução da quantidade total solicitada
+    em uma única iteração, esta função efetua um loop de leitura incremental até que
+    o buffer acumulado atinja rigorosamente 'number_of_bytes'.
+
+    Args:
+        connection: Objeto socket TCP ativo conectado ao peer.
+        number_of_bytes: Número exato de bytes a serem lidos.
+
+    Returns:
+        bytes: Buffer contendo exatamente a quantidade de bytes requerida.
+
+    Raises:
+        ProtocolError: Se a quantidade for inválida, se a conexão for reiniciada
+            ou se for encerrada prematuramente antes de completar o pacote.
     """
     if number_of_bytes < 0:
         raise ProtocolError("O número de bytes solicitado é inválido.")
@@ -80,7 +114,23 @@ def recv_exact(connection: socket.socket, number_of_bytes: int) -> bytes:
 
 
 def send_packet(connection: socket.socket, data: dict) -> None:
-    """Serializa um dicionário em JSON UTF-8 e envia com cabeçalho de 4 bytes."""
+    """Serializa um dicionário em JSON UTF-8 e o transmite via TCP com cabeçalho de enquadramento de 4 bytes.
+
+    Fluxo de Envio:
+        1. Validação de formato e segurança do dicionário de dados.
+        2. Serialização compacta em JSON UTF-8 (separadores sem espaços desnecessários).
+        3. Verificação de conformidade com o limite máximo de payload (MAX_PAYLOAD_BYTES).
+        4. Criação do cabeçalho de 4 bytes em big-endian com o tamanho exato do payload.
+        5. Transmissão atômica do cabeçalho + payload utilizando `sendall()`.
+
+    Args:
+        connection: Socket TCP conectado ao destino.
+        data: Dicionário contendo a estrutura de pacote da aplicação.
+
+    Raises:
+        ProtocolError: Em caso de falha de serialização JSON, estouro de limite
+            ou encerramento do socket durante o envio.
+    """
     if not isinstance(data, dict):
         raise ProtocolError("O pacote precisa ser um dicionário JSON.")
 
@@ -108,7 +158,26 @@ def send_packet(connection: socket.socket, data: dict) -> None:
 
 
 def receive_packet(connection: socket.socket) -> dict:
-    """Recebe o cabeçalho de 4 bytes e, em seguida, o JSON completo."""
+    """Recebe um pacote TCP completo reconstituído via enquadramento de 4 bytes e faz parse do JSON.
+
+    Fluxo de Recepção:
+        1. Leitura atômica dos primeiros 4 bytes (cabeçalho) via `recv_exact`.
+        2. Conversão dos 4 bytes big-endian para inteiro, obtendo o tamanho exato do payload em bytes.
+        3. Validação dos limites de tamanho do payload.
+        4. Leitura atômica dos N bytes do payload via `recv_exact`.
+        5. Decodificação UTF-8 e parsing do documento JSON para dicionário Python.
+        6. Auditoria estrutural e de segurança do pacote recebido (`_validate_incoming_packet`).
+
+    Args:
+        connection: Socket TCP conectado.
+
+    Returns:
+        dict: Dicionário correspondente ao pacote JSON recebido.
+
+    Raises:
+        ProtocolError: Se o cabeçalho for inválido, se a conexão cair, se o UTF-8/JSON
+            estiver malformado ou se violar regras de segurança.
+    """
     header = recv_exact(connection, HEADER_SIZE)
     payload_size = int.from_bytes(header, byteorder="big")
 
@@ -140,7 +209,18 @@ def receive_packet(connection: socket.socket) -> dict:
 
 
 def build_public_key_packet(sender: str, public_key_pem: str) -> dict:
-    """Monta o pacote de troca de chave pública. A privada nunca entra aqui."""
+    """Constrói o pacote JSON para troca de chave pública durante o handshake inicial.
+
+    Garantia:
+        A chave privada NUNCA deve ser passada a esta função nem transmitida pela rede.
+
+    Args:
+        sender: Identificador do remetente (ex.: 'Alice' ou 'Bob').
+        public_key_pem: Conteúdo textual da chave pública em formato PEM.
+
+    Returns:
+        dict: Estrutura do pacote public_key pronto para envio.
+    """
     return {
         "type": PACKET_PUBLIC_KEY,
         "sender": sender,
@@ -154,10 +234,21 @@ def build_encrypted_message_packet(
     ciphertext_base64: str,
     message_id: str | None = None,
 ) -> dict:
-    """Monta o pacote de mensagem. Só metadados e o ciphertext em Base64.
+    """Constrói o pacote JSON contendo a mensagem criptografada.
 
-    O texto original nunca entra neste dicionário. message_id é metadado
-    para o ACK de descriptografia da interface gráfica.
+    Segurança Arquitetural:
+        O texto em claro NÃO é incluído neste pacote em hipótese alguma. O pacote
+        transporta unicamente metadados de roteamento e o ciphertext resultante
+        da operação RSA-4096 codificado em Base64.
+
+    Args:
+        sender: Nome do remetente ('Alice' ou 'Bob').
+        recipient: Nome do destinatário pretendido.
+        ciphertext_base64: Texto cifrado gerado por RSA-4096 codificado em Base64.
+        message_id: Identificador único opcional da mensagem (UUID), utilizado para ACK.
+
+    Returns:
+        dict: Estrutura de pacote encrypted_message pronta para envio.
     """
     packet = {
         "type": PACKET_ENCRYPTED_MESSAGE,
@@ -176,7 +267,20 @@ def build_message_ack_packet(
     message_id: str,
     status: str = "decrypted",
 ) -> dict:
-    """Confirma que o destinatário descriptografou a mensagem com sucesso."""
+    """Constrói o pacote de confirmação de recebimento e descriptografia com sucesso (ACK).
+
+    Este pacote é emitido pelo destinatário SOMENTE após a descriptografia real
+    da mensagem com sua respectiva chave privada ter sido concluída sem erros.
+
+    Args:
+        sender: Identificador de quem descriptografou.
+        recipient: Destinatário da confirmação (autor da mensagem original).
+        message_id: Identificador da mensagem confirmada.
+        status: Estado de confirmação (padrão 'decrypted').
+
+    Returns:
+        dict: Estrutura de pacote message_ack.
+    """
     return {
         "type": PACKET_MESSAGE_ACK,
         "message_id": message_id,
@@ -187,7 +291,14 @@ def build_message_ack_packet(
 
 
 def build_disconnect_packet(sender: str) -> dict:
-    """Monta o aviso de encerramento da conversa."""
+    """Constrói o pacote de aviso gracioso de desconexão (encerramento com /sair).
+
+    Args:
+        sender: Nome do participante que está finalizando a sessão.
+
+    Returns:
+        dict: Estrutura de pacote disconnect.
+    """
     return {
         "type": PACKET_DISCONNECT,
         "sender": sender,
@@ -195,6 +306,10 @@ def build_disconnect_packet(sender: str) -> dict:
 
 
 def _validate_outgoing_packet(data: dict) -> None:
+    """Realiza a auditoria de segurança dos pacotes gerados antes do envio pela rede.
+
+    Verifica se o pacote é válido e impede que chaves privadas vazem acidentalmente.
+    """
     packet_type = data.get("type")
     if packet_type == PACKET_ENCRYPTED_MESSAGE:
         _assert_encrypted_message_shape(data)
@@ -212,6 +327,13 @@ def _validate_outgoing_packet(data: dict) -> None:
 
 
 def _validate_incoming_packet(data: dict) -> None:
+    """Audita rigorosamente os pacotes recebidos pela conexão TCP.
+
+    Verificações de Segurança:
+        1. O tipo de pacote deve pertencer ao conjunto de tipos autorizados.
+        2. Proíbe qualquer campo que indique tráfego de texto em claro ou chave privada.
+        3. Valida a conformidade dos campos esperados para cada tipo de pacote.
+    """
     packet_type = data.get("type")
     if packet_type not in {
         PACKET_PUBLIC_KEY,
@@ -243,6 +365,7 @@ def _validate_incoming_packet(data: dict) -> None:
 
 
 def _assert_encrypted_message_shape(data: dict) -> None:
+    """Verifica se o pacote encrypted_message possui todos os campos obrigatórios e nenhum campo extra proibido."""
     extra = set(data.keys()) - set(ENCRYPTED_MESSAGE_ALLOWED_FIELDS)
     missing = set(ENCRYPTED_MESSAGE_REQUIRED_FIELDS) - set(data.keys())
     if missing:
@@ -264,6 +387,7 @@ def _assert_encrypted_message_shape(data: dict) -> None:
 
 
 def _assert_message_ack_shape(data: dict) -> None:
+    """Verifica a conformidade da estrutura do pacote de confirmação (message_ack)."""
     extra = set(data.keys()) - set(MESSAGE_ACK_FIELDS)
     missing = set(MESSAGE_ACK_FIELDS) - set(data.keys())
     if missing:
@@ -280,3 +404,4 @@ def _assert_message_ack_shape(data: dict) -> None:
         raise ProtocolError("O ACK só pode confirmar status 'decrypted'.")
     if not isinstance(data.get("message_id"), str) or not data["message_id"].strip():
         raise ProtocolError("O ACK precisa identificar a mensagem.")
+

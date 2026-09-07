@@ -1,19 +1,26 @@
-"""Gerenciador das chaves RSA-4096 da Alice.
+"""Gerenciador local de chaves assimétricas RSA-4096.
 
-Este módulo gera, armazena e verifica o par de chaves da Alice.
-Nenhuma chave é enviada pela rede nesta etapa.
+Este módulo é responsável pelo ciclo de vida local do par de chaves RSA:
+geração do par, persistência segura no disco em formato PEM e verificação
+de integridade e conformidade com os parâmetros criptográficos exigidos.
 
-Esquema conceitual da atividade (ainda não implementado):
+Conceito de Criptografia Assimétrica no Projeto:
+    A comunicação segura ponto a ponto entre Alice e Bob apoia-se no princípio
+    de que cada participante gera e custodia exclusivamente o seu próprio par
+    de chaves (chave pública e chave privada).
+    
+    1. Chave Privada (private_key.pem):
+       - Permanece ESTRITAMENTE confidencial na máquina de quem a gerou.
+       - Nunca é transmitida pela rede, impressa em logs ou incluída em controle de versão.
+       - Utilizada unicamente para descriptografar mensagens destinadas a este participante.
+       
+    2. Chave Pública (public_key.pem):
+       - Pode ser compartilhada abertamente com o outro participante pelo canal TCP.
+       - Utilizada pelo interlocutor para criptografar mensagens destinadas a este participante.
 
-    Bob → mensagem para Alice
-        Bob cifra com a CHAVE PÚBLICA da Alice.
-        Alice decifra com a CHAVE PRIVADA da Alice.
-
-    Alice → mensagem para Bob
-        Alice cifra com a CHAVE PÚBLICA do Bob.
-        Bob decifra com a CHAVE PRIVADA do Bob.
-
-A chave privada permanece apenas neste computador (Alice).
+Fluxo Bidirecional da Atividade:
+    Bob  → Alice: Bob cifra com a pública da Alice; Alice decifra com sua privada.
+    Alice → Bob:  Alice cifra com a pública do Bob; Bob decifra com sua privada.
 """
 
 from __future__ import annotations
@@ -28,52 +35,61 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPubl
 # Diretório base do backend: .../ChatCriptografado/backend
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-# Diretório das chaves: pasta local onde os arquivos PEM da Alice são
-# gravados. Não deve ser compartilhada com outros computadores.
+# Diretório das chaves: armazena os arquivos PEM locais da máquina em execução.
+# Este diretório está explicitamente protegido no .gitignore.
 KEYS_DIR = BACKEND_DIR / "keys"
 
-# Chave privada: segredo da Alice. Serve para descriptografar mensagens
-# enviadas a ela. Nunca deve ser compartilhada, impressa ou enviada ao Git.
+# Caminho da chave privada local: arquivo de máxima confidencialidade.
 PRIVATE_KEY_PATH = KEYS_DIR / "private_key.pem"
 
-# Chave pública: pode ser compartilhada futuramente com Bob, para que ele
-# consiga criptografar mensagens destinadas à Alice.
+# Caminho da chave pública local: distribuída durante o handshake TCP.
 PUBLIC_KEY_PATH = KEYS_DIR / "public_key.pem"
 
-# 4096 bits oferece margem de segurança maior do que 2048 bits, ainda
-# comum em atividades acadêmicas e em recomendações atuais para RSA.
+# Tamanho do módulo RSA em bits. 4096 bits oferece um nível de segurança elevado
+# contra ataques de fatoração inteira (equivalente a ~140 bits de segurança simétrica).
 RSA_KEY_SIZE = 4096
 
-# 65537 (2^16 + 1) é o expoente público padrão do RSA: ímpar, primo e
-# eficiente na cifragem, sem enfraquecer o esquema quando o módulo é grande.
+# Expoente público padrão da indústria (Fermat F_4 = 2^16 + 1 = 65537).
+# Apresenta peso de Hamming baixo (apenas dois bits 1 em binário: 10000000000000001_2),
+# garantindo exponenciação modular rápida sem comprometer a segurança.
 RSA_PUBLIC_EXPONENT = 65537
 
 
 class KeyManagerError(Exception):
-    """Erro no gerenciamento ou na verificação das chaves RSA da Alice."""
+    """Exceção customizada para erros no gerenciamento ou verificação de chaves RSA."""
 
 
 def keys_already_exist() -> bool:
-    """Retorna True se a chave privada ou a chave pública já existirem.
+    """Verifica se qualquer um dos arquivos do par RSA já existe no disco.
 
-    Verificamos antes de gerar um novo par para não sobrescrever uma
-    chave privada já criada. Perder a chave privada da Alice impediria
-    descriptografar mensagens futuras destinadas a este computador.
+    Essa verificação atua como salvaguarda para evitar a sobreescrita
+    acidental de uma chave privada preexistente. Caso a chave privada fosse
+    sobrescrita, todas as mensagens anteriormente cifradas para este participante
+    tornar-se-iam permanentemente irrecuperáveis.
+
+    Returns:
+        bool: True se private_key.pem ou public_key.pem já existirem no diretório de chaves.
     """
     return PRIVATE_KEY_PATH.exists() or PUBLIC_KEY_PATH.exists()
 
 
 def generate_rsa_keys() -> bool:
-    """Gera um par RSA-4096 da Alice e o salva em PEM, se ainda não existir.
+    """Gera um par de chaves RSA-4096 e o serializa em arquivos PEM, se ainda não existir.
 
-    Retorna True se um novo par foi gerado e False se as chaves já existiam.
+    Processo Criptográfico:
+        1. Geração probabilística de dois números primos grandes distintos (p e q).
+        2. Cálculo do módulo RSA n = p * q (4096 bits) e da função totiente phi(n).
+        3. Associação ao expoente público e = 65537 e dedução do expoente privado d = e^-1 mod phi(n).
+        4. Derivação da chave pública correspondente a partir do objeto da chave privada.
+        5. Serialização da chave privada no padrão PKCS#8 (sem criptografia de senha local,
+           garantida pelo controle de acesso do sistema de arquivos e .gitignore).
+        6. Serialização da chave pública no padrão SubjectPublicKeyInfo (X.509).
 
-    O formato PEM (Privacy-Enhanced Mail) é um texto ASCII delimitado por
-    cabeçalhos BEGIN/END, conveniente para armazenar chaves em arquivo.
+    Returns:
+        bool: True se um novo par foi gerado com sucesso; False se as chaves já existiam.
 
-    PKCS8 é um padrão de encapsulamento da chave privada. Aqui usamos
-    PKCS8 sem senha (NoEncryption) porque a proteção, nesta etapa, é
-    manter o arquivo somente no computador da Alice e fora do Git.
+    Raises:
+        OSError: Caso ocorra falha de permissão ou I/O ao persistir os arquivos em disco.
     """
     KEYS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -86,18 +102,20 @@ def generate_rsa_keys() -> bool:
 
     print("Gerando par RSA-4096 da Alice. Isso pode levar alguns segundos...")
 
-    # A chave privada é gerada primeiro; a pública é derivada dela.
+    # Geração dos primos p e q e cálculo dos parâmetros assimétricos RSA
     private_key = rsa.generate_private_key(
         public_exponent=RSA_PUBLIC_EXPONENT,
         key_size=RSA_KEY_SIZE,
     )
     public_key = private_key.public_key()
 
+    # Formatação PKCS#8 para a chave privada
     private_pem = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     )
+    # Formatação SubjectPublicKeyInfo (SPKI) para a chave pública
     public_pem = public_key.public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -114,7 +132,17 @@ def generate_rsa_keys() -> bool:
 
 
 def _load_private_key() -> RSAPrivateKey:
-    """Carrega a chave privada PEM do disco, sem imprimir o conteúdo."""
+    """Carrega a chave privada local a partir do arquivo PEM persistido em disco.
+
+    Por razões estritas de segurança, o conteúdo bruto da chave privada
+    nunca é exposto ou retornado em formato textual.
+
+    Returns:
+        RSAPrivateKey: Instância da chave privada RSA carregada e pronta para operações.
+
+    Raises:
+        KeyManagerError: Caso o arquivo esteja corrompido ou o algoritmo não seja RSA.
+    """
     try:
         loaded_key = serialization.load_pem_private_key(
             PRIVATE_KEY_PATH.read_bytes(),
@@ -135,7 +163,14 @@ def _load_private_key() -> RSAPrivateKey:
 
 
 def _load_public_key() -> RSAPublicKey:
-    """Carrega a chave pública PEM do disco."""
+    """Carrega a chave pública local a partir do arquivo PEM persistido em disco.
+
+    Returns:
+        RSAPublicKey: Instância da chave pública RSA carregada.
+
+    Raises:
+        KeyManagerError: Caso o arquivo esteja corrompido ou o algoritmo não seja RSA.
+    """
     try:
         loaded_key = serialization.load_pem_public_key(
             PUBLIC_KEY_PATH.read_bytes()
@@ -155,7 +190,18 @@ def _load_public_key() -> RSAPublicKey:
 
 
 def _public_keys_match(private_key: RSAPrivateKey, public_key: RSAPublicKey) -> bool:
-    """Compara o módulo n e o expoente e das duas chaves públicas RSA."""
+    """Verifica matematicamente se a chave pública fornecida corresponde à chave privada.
+
+    Compara o módulo 'n' e o expoente público 'e' derivados da chave privada
+    com os parâmetros públicos da chave armazenada em disco.
+
+    Args:
+        private_key: Instância da chave privada RSA.
+        public_key: Instância da chave pública RSA.
+
+    Returns:
+        bool: True se o módulo e o expoente forem estritamente idênticos.
+    """
     derived_numbers = private_key.public_key().public_numbers()
     loaded_numbers = public_key.public_numbers()
     return (
@@ -165,13 +211,19 @@ def _public_keys_match(private_key: RSAPrivateKey, public_key: RSAPublicKey) -> 
 
 
 def verify_rsa_keys() -> bool:
-    """Verifica existência, algoritmo, tamanho e correspondência do par RSA.
+    """Executa a auditoria completa do par de chaves RSA local.
 
-    Confirma que ambas as chaves têm exatamente 4096 bits e que a chave
-    pública em disco é a mesma derivada da chave privada da Alice.
+    Validações Realizadas:
+        1. Existência física dos dois arquivos de chave (privada e pública).
+        2. Conformidade do algoritmo (estritamente RSA).
+        3. Tamanho exato de 4096 bits para ambas as chaves.
+        4. Correspondência matemática entre o par de chaves.
 
-    Em caso de problema, a mensagem é exibida em português e os arquivos
-    não são apagados nem substituídos.
+    Returns:
+        bool: True se o par de chaves estiver íntegro, válido e em conformidade.
+
+    Raises:
+        KeyManagerError: Caso qualquer um dos testes de conformidade falhe.
     """
     private_found = PRIVATE_KEY_PATH.exists()
     public_found = PUBLIC_KEY_PATH.exists()
@@ -256,7 +308,7 @@ def verify_rsa_keys() -> bool:
 
 
 def main() -> None:
-    """Gera o par RSA se necessário e, em seguida, verifica as chaves."""
+    """Ponto de entrada de linha de comando para geração e auditoria do par RSA."""
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except (AttributeError, OSError):
@@ -273,3 +325,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

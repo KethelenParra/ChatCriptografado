@@ -1,19 +1,26 @@
-"""Simulação local da comunicação criptográfica entre Alice e Bob.
+"""Simulação de comunicação criptográfica assimétrica bidirecional entre Alice e Bob.
 
-Ainda não há rede. Os dois participantes são representados por pares
-RSA-4096 diferentes neste mesmo computador:
+Finalidade Acadêmica:
+    Validar em ambiente controlado a troca segura de mensagens entre dois participantes
+    distintos com seus respectivos pares de chaves RSA-4096:
+    
+        Participante 1 (Alice):
+            - Chave pública: backend/keys/public_key.pem
+            - Chave privada: backend/keys/private_key.pem
+            
+        Participante 2 (Bob simulado):
+            - Chave pública: backend/test_keys/bob/public_key.pem
+            - Chave privada: backend/test_keys/bob/private_key.pem
 
-    Alice  → backend/keys/
-    Bob    → backend/test_keys/bob/   (chaves de TESTE, não as do Mussatto)
-
-Fluxos demonstrados:
-
-    Alice → Bob: cifra com a pública do Bob; Bob abre com a privada dele.
-    Bob → Alice: cifra com a pública da Alice; Alice abre com a privada dela.
-
-O terceiro teste tenta abrir uma mensagem do Bob com a privada da Alice,
-o que deve falhar: a chave privada precisa corresponder à pública usada
-na cifra.
+Roteiro de Validação Criptográfica:
+    1. Fluxo Alice -> Bob:
+       Alice cifra com a chave pública do Bob; Bob descriptografa com sua chave privada.
+    2. Fluxo Bob -> Alice:
+       Bob cifra com a chave pública da Alice; Alice descriptografa com sua chave privada.
+    3. Teste Negativo de Confidencialidade (Chave Incorreta):
+       Alice tenta abrir uma mensagem cifrada para o Bob utilizando sua própria chave privada.
+       A operação DEVE falhar obrigatoriamente, comprovando que apenas o detentor da chave
+       privada correspondente à chave pública usada na cifragem consegue decifrar o conteúdo.
 """
 
 from __future__ import annotations
@@ -43,9 +50,7 @@ BOB_TO_ALICE_MESSAGE = (
     "Olá Alice! Aqui é Bob. Recebi sua mensagem com segurança."
 )
 
-# Exceções da cryptography esperadas quando a chave privada não combina.
-# RSA-OAEP costuma lançar ValueError ("Decryption failed.").
-# InvalidTag é típico de AEAD; incluímos por segurança, sem mascarar bugs.
+# Exceções esperadas da biblioteca cryptography quando a chave privada é inadequada
 EXPECTED_DECRYPT_FAILURES = (ValueError, InvalidTag)
 
 
@@ -58,7 +63,14 @@ def _configure_stdout() -> None:
 
 
 def test_alice_to_bob() -> bytes:
-    """Alice cifra com a pública do Bob; Bob decifra com a privada dele."""
+    """Simula o envio de mensagem de Alice para Bob (cifra com pública do Bob, decifra com privada do Bob).
+
+    Returns:
+        bytes: Bloco criptografado gerado no teste (512 bytes).
+
+    Raises:
+        RsaServiceError: Se a mensagem recuperada não for idêntica à original.
+    """
     print("========================================")
     print("          ALICE -> BOB")
     print("========================================")
@@ -120,7 +132,14 @@ def test_alice_to_bob() -> bytes:
 
 
 def test_bob_to_alice() -> bytes:
-    """Bob cifra com a pública da Alice; Alice decifra com a privada dela."""
+    """Simula o envio de mensagem de Bob para Alice (cifra com pública de Alice, decifra com privada de Alice).
+
+    Returns:
+        bytes: Bloco criptografado gerado no teste (512 bytes).
+
+    Raises:
+        RsaServiceError: Se a mensagem recuperada não for idêntica à original.
+    """
     print("========================================")
     print("          BOB -> ALICE")
     print("========================================")
@@ -182,12 +201,16 @@ def test_bob_to_alice() -> bytes:
 
 
 def test_wrong_private_key(alice_to_bob_ciphertext: bytes) -> None:
-    """Tenta abrir a mensagem de Alice→Bob com a privada da Alice.
+    """Valida o princípio de confidencialidade assimétrica tentando decifrar com a chave privada incorreta.
 
-    A falha é esperada: a mensagem foi cifrada com a pública do Bob.
-    Capturamos ValueError/InvalidTag da cryptography (ou o RsaServiceError
-    que a encapsula, desde que a causa original seja uma dessas).
-    Qualquer outro erro sobe normalmente, para não mascarar bugs.
+    Tenta abrir a mensagem destinada a Bob utilizando a chave privada da Alice.
+    A falha de desempacotamento do padding OAEP é a consequência matemática esperada.
+
+    Args:
+        alice_to_bob_ciphertext: Bloco cifrado com a chave pública de Bob.
+
+    Raises:
+        RsaServiceError: Se a descriptografia indevidamente tiver sucesso.
     """
     print("========================================")
     print("       TESTE DE CHAVE INCORRETA")
@@ -240,6 +263,7 @@ def test_wrong_private_key(alice_to_bob_ciphertext: bytes) -> None:
 
 
 def print_final_summary() -> None:
+    """Exibe o sumário consolidado da suíte de testes de simulação criptográfica."""
     print("========================================")
     print("          RESULTADO FINAL")
     print("========================================")
@@ -269,6 +293,7 @@ def print_final_summary() -> None:
 
 
 def main() -> None:
+    """Ponto de entrada do script para execução da simulação Alice ↔ Bob."""
     _configure_stdout()
     try:
         alice_to_bob_ciphertext = test_alice_to_bob()
@@ -283,3 +308,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

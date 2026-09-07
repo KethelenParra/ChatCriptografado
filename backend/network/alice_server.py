@@ -1,16 +1,24 @@
-"""Servidor TCP da Alice.
+"""Servidor TCP da Alice para comunicação segura com criptografia RSA-4096.
 
-O servidor escuta em um host/porta configuráveis (padrão 127.0.0.1:5000),
-aceita o cliente Bob e troca somente chaves públicas. As mensagens são
-cifradas com RSA-4096 + OAEP/SHA-256 usando a chave pública recebida
-do destinatário.
+Papel no Sistema:
+    Alice atua como servidora TCP (lado passivo da conexão de transporte).
+    Ela inicializa um socket de escuta em um host e porta definidos (padrão 127.0.0.1:5000),
+    aguarda a conexão do cliente Bob e executa o handshake de troca de chaves públicas.
 
-A chave privada permanece neste computador, em --keys-dir (padrão:
-backend/keys/). Nunca é impressa nem enviada pelo TCP.
-
-TCP Socket cria um canal de bytes confiável. recv() pode devolver só
-um pedaço; o framing de 4 bytes reconstitui o JSON. A mensagem original
-nunca entra no pacote: só o ciphertext em Base64 (Base64 não é cifra).
+Ciclo Criptográfico da Alice:
+    1. Handshake Inicial:
+       - Alice envia sua chave pública (public_key.pem) para Bob.
+       - Alice recebe a chave pública do Bob e a valida como RSA-4096, mantendo-a
+         estritamente em memória de execução durante a conexão.
+       - A chave privada da Alice NUNCA é transmitida.
+    2. Transmissão de Mensagens (Alice -> Bob):
+       - Alice cifra o texto utilizando a CHAVE PÚBLICA DO BOB (RSA-OAEP/SHA-256).
+       - O ciphertext resultante de 512 bytes é codificado em Base64 e enviado via TCP.
+    3. Recepção de Mensagens (Bob -> Alice):
+       - Alice recebe o ciphertext em Base64 via TCP.
+       - Decodifica para bytes e descriptografa utilizando sua própria CHAVE PRIVADA LOCAL.
+    4. Encerramento:
+       - Trata o comando '/sair' enviando um pacote gracioso de desconexão.
 """
 
 from __future__ import annotations
@@ -52,33 +60,41 @@ PEER_NAME = "Bob"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Realiza a análise dos argumentos de linha de comando para o servidor da Alice.
+
+    Args:
+        argv: Lista opcional de argumentos (se None, utiliza sys.argv).
+
+    Returns:
+        argparse.Namespace: Objeto contendo os argumentos processados (--host, --port, --keys-dir).
+    """
     parser = argparse.ArgumentParser(
         description=(
-            "Servidor TCP da Alice. Usa as chaves locais em --keys-dir "
+            "Servidor TCP da Alice. Utiliza as chaves locais em --keys-dir "
             "(padrão: backend/keys/)."
         )
     )
     parser.add_argument(
         "--host",
         default=DEFAULT_HOST,
-        help="Endereço de escuta. Use 0.0.0.0 para aceitar conexões da rede.",
+        help="Endereço de escuta TCP (ex.: 127.0.0.1 ou 0.0.0.0 para aceitar conexões remotas/Tailscale).",
     )
     parser.add_argument(
         "--port",
         type=int,
         default=DEFAULT_PORT,
-        help="Porta TCP de escuta.",
+        help="Porta TCP de escuta (padrão: 5000).",
     )
     parser.add_argument(
         "--keys-dir",
         default=DEFAULT_KEYS_DIR,
-        help="Diretório das chaves locais, relativo a backend/.",
+        help="Diretório das chaves locais da Alice, relativo a backend/ (padrão: keys).",
     )
     return parser.parse_args(argv)
 
 
 def _configure_stdio() -> None:
-    """Garante acentuação correta no terminal do Windows."""
+    """Configura o encoding padrão de entrada e saída do terminal para UTF-8."""
     try:
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stdin.reconfigure(encoding="utf-8")
@@ -87,6 +103,7 @@ def _configure_stdio() -> None:
 
 
 def _print_banner(host: str, port: int, keys_dir: Path) -> None:
+    """Exibe o cabeçalho descritivo com parâmetros de rede e localização de chaves."""
     print("========================================")
     print("       ALICE - SERVIDOR TCP")
     print("========================================")
@@ -105,7 +122,25 @@ def _print_banner(host: str, port: int, keys_dir: Path) -> None:
 
 
 def exchange_public_keys(connection: socket.socket, public_key_path: Path):
-    """Envia a pública local e recebe a pública do Bob só em memória."""
+    """Executa o handshake de troca de chaves públicas com o cliente Bob.
+
+    Etapas do Handshake:
+        1. Carrega a chave pública local da Alice (public_key.pem) e transmite via TCP.
+        2. Aguarda e recebe o pacote do tipo 'public_key' enviado por Bob.
+        3. Valida se a chave recebida é estritamente RSA de 4096 bits.
+        4. Mantém o objeto de chave pública do Bob em memória (não persiste no disco da Alice).
+
+    Args:
+        connection: Socket TCP conectado ao Bob.
+        public_key_path: Caminho para o arquivo public_key.pem local da Alice.
+
+    Returns:
+        RSAPublicKey: Chave pública de Bob validada e pronta para cifragem.
+
+    Raises:
+        ProtocolError: Se a resposta não for um pacote public_key válido.
+        RsaServiceError: Se a chave recebida for inválida ou não tiver 4096 bits.
+    """
     local_pem = read_public_pem_text(public_key_path)
     send_packet(connection, build_public_key_packet(SENDER_NAME, local_pem))
     print("Chave pública da Alice enviada ao Bob.")
@@ -131,7 +166,21 @@ def exchange_public_keys(connection: socket.socket, public_key_path: Path):
 
 
 def send_encrypted_message(connection: socket.socket, message: str, bob_public_key) -> None:
-    """Cifra com a pública do Bob e envia só o ciphertext em Base64."""
+    """Criptografa a mensagem com a chave pública do Bob e a envia via TCP.
+
+    Garantia de Confidencialidade:
+        O texto em claro é criptografado localmente com RSA-4096 OAEP/SHA-256.
+        Apenas o ciphertext codificado em Base64 é transmitido pela rede.
+
+    Args:
+        connection: Socket TCP conectado ao Bob.
+        message: Texto digitado pela Alice.
+        bob_public_key: Instância de RSAPublicKey pertencente a Bob.
+
+    Raises:
+        RsaServiceError: Em caso de falha de cifragem ou tamanho excessivo.
+        ProtocolError: Em caso de falha no envio TCP.
+    """
     ciphertext = encrypt_message_with_public_key_object(message, bob_public_key)
     ciphertext_b64 = encrypted_bytes_to_base64(ciphertext)
     packet = build_encrypted_message_packet(SENDER_NAME, PEER_NAME, ciphertext_b64)
@@ -159,7 +208,19 @@ def send_encrypted_message(connection: socket.socket, message: str, bob_public_k
 
 
 def receive_peer_packet(connection: socket.socket, private_key_path: Path) -> str | None:
-    """Recebe um pacote do Bob e decifra com a privada local. None = disconnect."""
+    """Recebe um pacote TCP do Bob e descriptografa o ciphertext com a chave privada da Alice.
+
+    Args:
+        connection: Socket TCP ativo com Bob.
+        private_key_path: Caminho da chave privada local da Alice.
+
+    Returns:
+        str: Texto em claro descriptografado, ou None se Bob solicitou desconexão (/sair).
+
+    Raises:
+        ProtocolError: Se o pacote for de tipo inesperado ou violar regras do protocolo.
+        RsaServiceError: Se a descriptografia RSA falhar.
+    """
     packet = receive_packet(connection)
     packet_type = packet.get("type")
 
@@ -199,7 +260,15 @@ def conversation_loop(
     bob_public_key,
     private_key_path: Path,
 ) -> None:
-    """Fluxo alternado: Alice envia, Bob responde, Alice envia, etc."""
+    """Executa o laço de conversa alternada no terminal (Alice envia -> Bob responde).
+
+    Gerencia comandos de saída (/sair), entradas vazias e exceções de rede/criptografia.
+
+    Args:
+        connection: Socket TCP conectado ao Bob.
+        bob_public_key: Chave pública de Bob para cifragem.
+        private_key_path: Caminho da chave privada da Alice para decifragem.
+    """
     print("Conversa iniciada. Digite /sair para encerrar.")
     print()
 
@@ -242,6 +311,16 @@ def conversation_loop(
 
 
 def run_server(host: str, port: int, keys_dir: Path) -> int:
+    """Inicializa o servidor TCP da Alice, gerencia conexões e garante liberação limpa de recursos.
+
+    Args:
+        host: Endereço IP de escuta.
+        port: Porta TCP.
+        keys_dir: Diretório contendo as chaves locais da Alice.
+
+    Returns:
+        int: Código de status do processo (0 para sucesso, 1 para erro).
+    """
     _configure_stdio()
 
     public_key_path = keys_dir / "public_key.pem"
@@ -299,6 +378,7 @@ def run_server(host: str, port: int, keys_dir: Path) -> int:
 
 
 def main() -> int:
+    """Ponto de entrada do script para execução do servidor Alice."""
     args = parse_args()
     keys_dir = resolve_keys_dir(args.keys_dir)
     return run_server(args.host, args.port, keys_dir)
@@ -306,3 +386,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

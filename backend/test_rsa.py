@@ -1,16 +1,27 @@
-"""Teste didático da criptografia RSA-4096 com OAEP e SHA-256.
+"""Teste didático e unitário da criptografia assimétrica RSA-4096 com OAEP e SHA-256.
 
-Demonstra o fluxo local desta etapa:
+Finalidade Acadêmica:
+    Demonstrar isoladamente o ciclo de vida criptográfico local de uma mensagem:
+    
+        Mensagem Original (Plaintext UTF-8)
+            │
+            ▼ Cifragem com Chave Pública (public_key.pem)
+        Bloco Criptografado (512 bytes)
+            │
+            ▼ Codificação para Transporte
+        Representação Textual em Base64
+            │
+            ▼ Decodificação Base64
+        Bloco Criptografado (512 bytes)
+            │
+            ▼ Decifragem com Chave Privada (private_key.pem)
+        Mensagem Recuperada (Plaintext idêntico)
 
-    mensagem original
-        → chave pública da Alice
-        → RSA-4096 + OAEP + SHA-256
-        → mensagem criptografada
-        → chave privada da Alice
-        → mensagem descriptografada
-
-Não há comunicação de rede. As chaves já existentes não são geradas
-novamente. O conteúdo da chave privada nunca é impresso.
+Validações de Integridade Executadas:
+    1. Reversibilidade Criptográfica: Plaintext original == Plaintext recuperado.
+    2. Dimensão do Bloco: Comprimento do ciphertext é estritamente 512 bytes (4096 bits).
+    3. Confidencialidade/Dispersão: Ciphertext é matematicamente distinto dos bytes do plaintext.
+    4. Não Exposição: O conteúdo sensível da chave privada permanece protegido e nunca é impresso.
 """
 
 from __future__ import annotations
@@ -25,7 +36,7 @@ from crypto.rsa_service import (
     encrypted_bytes_to_base64,
 )
 
-
+# Mensagem padrão para execução do teste didático
 TEST_MESSAGE = "Olá Alice! Esta mensagem está protegida com RSA-4096."
 
 
@@ -38,7 +49,15 @@ def _configure_stdout() -> None:
 
 
 def run_test() -> str:
-    """Executa o teste didático e devolve o Base64 do ciphertext."""
+    """Executa a demonstração didática de cifragem e decifragem RSA-4096 e valida sua integridade.
+
+    Returns:
+        str: Representação em Base64 do bloco criptografado de 512 bytes.
+
+    Raises:
+        RsaServiceError: Caso ocorra erro durante a cifragem ou decifragem, ou se
+            a validação de integridade falhar.
+    """
     original_message = TEST_MESSAGE
     original_size = len(original_message.encode("utf-8"))
 
@@ -126,6 +145,7 @@ def run_test() -> str:
 
 
 def main() -> None:
+    """Ponto de entrada para execução autônoma do teste de criptografia RSA."""
     _configure_stdout()
     try:
         run_test()
@@ -137,3 +157,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

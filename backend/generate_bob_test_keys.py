@@ -1,10 +1,18 @@
-"""Gera um par RSA-4096 de TESTE para simular o Bob neste computador.
+"""Utilitário de geração de par de chaves RSA-4096 para simulação local do Bob.
 
-Essas chaves NÃO pertencem ao Gabriel Mussatto. Quando ele entrar no
-projeto, gerará o próprio par no computador dele.
+Objetivo Didático e de Testes:
+    Permite validar a comunicação criptográfica assimétrica bidirecional em um
+    único computador de desenvolvimento, sem sobrepor as chaves da Alice (backend/keys/).
+    
+    Estrutura de Armazenamento:
+        - Par da Alice: backend/keys/ (private_key.pem e public_key.pem)
+        - Par simulado do Bob: backend/test_keys/bob/ (private_key.pem e public_key.pem)
 
-As chaves da Alice em backend/keys/ NÃO são lidas, movidas nem
-substituídas por este script.
+Importante:
+    Este par de testes é destinado exclusivamente a suítes de validação automatizada
+    e simulação local no mesmo computador. No ambiente distribuído real via Tailscale,
+    o participante Gabriel Mussatto (Bob) gera seu par autêntico diretamente em sua própria
+    máquina física executando `python crypto/key_manager.py`.
 """
 
 from __future__ import annotations
@@ -20,15 +28,14 @@ from crypto.key_manager import RSA_KEY_SIZE, RSA_PUBLIC_EXPONENT
 
 BACKEND_DIR = Path(__file__).resolve().parent
 
-# Pasta exclusiva das chaves de teste do Bob. Não confundir com
-# backend/keys/, que contém o par real da Alice neste projeto.
+# Diretório isolado para as chaves simuladas do Bob
 BOB_TEST_KEYS_DIR = BACKEND_DIR / "test_keys" / "bob"
 BOB_PRIVATE_KEY_PATH = BOB_TEST_KEYS_DIR / "private_key.pem"
 BOB_PUBLIC_KEY_PATH = BOB_TEST_KEYS_DIR / "public_key.pem"
 
 
 class BobTestKeyError(Exception):
-    """Erro na geração ou verificação das chaves de teste do Bob."""
+    """Exceção customizada para falhas na geração ou auditoria das chaves de teste do Bob."""
 
 
 def _configure_stdout() -> None:
@@ -40,14 +47,22 @@ def _configure_stdout() -> None:
 
 
 def bob_test_keys_exist() -> bool:
-    """Retorna True se qualquer arquivo PEM de teste do Bob já existir."""
+    """Verifica se qualquer um dos arquivos PEM de teste do Bob já existe no disco.
+
+    Returns:
+        bool: True se private_key.pem ou public_key.pem já existirem no diretório de teste.
+    """
     return BOB_PRIVATE_KEY_PATH.exists() or BOB_PUBLIC_KEY_PATH.exists()
 
 
 def generate_bob_test_keys() -> bool:
-    """Gera o par RSA-4096 de teste do Bob, sem sobrescrever arquivos.
+    """Gera um par independente de chaves RSA-4096 para o Bob simulado no disco local.
 
-    Retorna True se um novo par foi gerado e False se as chaves já existiam.
+    Gera as chaves utilizando expoente e = 65537 e módulo de 4096 bits.
+    Salva a chave privada em PKCS#8 sem senha e a chave pública em SubjectPublicKeyInfo.
+
+    Returns:
+        bool: True se um novo par foi gerado com sucesso; False se as chaves já existiam.
     """
     BOB_TEST_KEYS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -88,7 +103,15 @@ def generate_bob_test_keys() -> bool:
 
 
 def verify_bob_test_keys() -> bool:
-    """Confirma que o par de teste do Bob é RSA-4096 e está combinado."""
+    """Audita a integridade, o tamanho (4096 bits) e a correspondência do par de chaves de teste do Bob.
+
+    Returns:
+        bool: True se o par de teste for válido e íntegro.
+
+    Raises:
+        BobTestKeyError: Se os arquivos estiverem ausentes, o algoritmo não for RSA,
+            o tamanho for diferente de 4096 bits ou as chaves não coincidirem.
+    """
     if not BOB_PRIVATE_KEY_PATH.exists() or not BOB_PUBLIC_KEY_PATH.exists():
         raise BobTestKeyError(
             "As chaves de teste do Bob estão ausentes. "
@@ -161,6 +184,7 @@ def verify_bob_test_keys() -> bool:
 
 
 def main() -> None:
+    """Ponto de entrada do script de geração e verificação das chaves simuladas de teste."""
     _configure_stdout()
     try:
         generate_bob_test_keys()
@@ -173,3 +197,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
