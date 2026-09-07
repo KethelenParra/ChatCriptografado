@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+backend/.venv/
+
+# Chaves criptográficas (nunca versionar PEM)
+*.pem
+backend/keys/*.pem
+backend/test_keys/
+
+# Variáveis de ambiente
+.env
+.env.*
+!.env.example
+
+# Node / React
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.idea/
+.cursor/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
