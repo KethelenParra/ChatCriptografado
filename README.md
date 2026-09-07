@@ -9,28 +9,46 @@ Projeto desenvolvido para atividade acadêmica em dupla.
 
 ## Objetivo
 
-Implementar comunicação remota cliente/servidor utilizando TCP Socket, com troca de informações criptografadas por RSA.
+Implementar comunicação remota cliente/servidor utilizando TCP Socket, com troca de informações criptografadas por RSA, e uma interface gráfica local em React.
 
 Cada computador gera o próprio par de chaves. A chave privada nunca sai da máquina de quem a gerou. Pela rede trafegam apenas a chave pública, o ciphertext e metadados necessários.
 
 ## Tecnologias
 
 - Python
-- TCP Socket
+- TCP Socket (comunicação remota Alice ↔ Bob)
 - RSA-4096
 - OAEP
 - SHA-256
 - Base64
-- React (futuramente)
-- FastAPI (futuramente)
-- WebSocket (futuramente)
+- FastAPI (API local)
+- WebSocket (ponte local React ↔ Python)
+- React + Vite (interface)
 
 ## Arquitetura
 
+O WebSocket **não substitui** o TCP. Ele só liga o navegador ao Python **deste computador**. A conversa entre as casas continua no TCP + RSA.
+
+```text
+React
+  ↓ WebSocket local
+FastAPI
+  ↓
+TCP Socket + RSA-4096
+  ↓
+Tailscale
+  ↓
+TCP Socket + RSA-4096
+  ↓
+FastAPI
+  ↓ WebSocket local
+React
+```
+
 | Papel | Pessoa | Programa |
 | --- | --- | --- |
-| Servidor TCP | Alice (Kethelen) | `python -m network.alice_server` |
-| Cliente TCP | Bob (Gabriel Mussatto) | `python -m network.bob_client` |
+| Servidor TCP | Alice (Kethelen) | `python .\run_gui.py --role alice` ou `python -m network.alice_server` |
+| Cliente TCP | Bob (Gabriel Mussatto) | `python .\run_gui.py --role bob --peer-host <IP>` ou `python -m network.bob_client` |
 
 Cada computador possui o próprio par RSA em `backend/keys/`:
 
@@ -49,11 +67,13 @@ O diretório `backend/keys/` significa sempre **as chaves locais da máquina que
 
 1. Alice cifra com a **chave pública de Bob**.
 2. Bob decifra com a **chave privada de Bob**.
+3. Bob envia `message_ack` somente se a descriptografia funcionar.
 
 **Bob → Alice**
 
 1. Bob cifra com a **chave pública de Alice**.
 2. Alice decifra com a **chave privada de Alice**.
+3. Alice envia `message_ack` após descriptografar com sucesso.
 
 As chaves privadas **nunca** são compartilhadas, nem mesmo em repositório Git privado.
 
@@ -62,14 +82,15 @@ As chaves privadas **nunca** são compartilhadas, nem mesmo em repositório Git 
 ```text
 ChatCriptografado/
 ├── backend/
+│   ├── api/                    # FastAPI + WebSocket local
+│   ├── services/               # ChatRuntime (TCP/RSA sem input())
 │   ├── crypto/                 # geração, carga e cifra RSA
-│   ├── network/                # protocolo TCP, servidor e cliente
+│   ├── network/                # protocolo TCP, servidor e cliente de terminal
 │   ├── keys/                   # chaves LOCAIS (não versionadas)
-│   ├── generate_bob_test_keys.py
-│   ├── test_rsa.py
-│   ├── test_alice_bob.py
-│   └── requirements.txt
-├── frontend/                   # React será implementado depois
+│   ├── run_gui.py
+│   ├── requirements.txt
+│   └── ...
+├── frontend/                   # React + Vite
 ├── .gitignore
 └── README.md
 ```
@@ -123,9 +144,72 @@ Cada participante deve executar esse comando **localmente**. Alice cria um par. 
 
 Nunca copiar `private_key.pem` de um computador para outro.
 
-## Teste local (mesmo computador)
+6. Frontend (em outro terminal):
 
-Útil enquanto Alice e Bob ainda não estão em máquinas distintas.
+```powershell
+cd ChatCriptografado\frontend
+npm install
+```
+
+Opcional: copie `frontend/.env.example` para `frontend/.env`. Os valores padrão já apontam para `127.0.0.1:8000`.
+
+## Interface gráfica
+
+O FastAPI sobe em `127.0.0.1:8000`. O React sobe em `http://localhost:5173`. A conexão TCP **não** inicia sozinha: use os botões da interface.
+
+### Alice (Kethelen)
+
+Backend:
+
+```powershell
+cd ChatCriptografado\backend
+.\.venv\Scripts\Activate.ps1
+python .\run_gui.py --role alice --tcp-host 0.0.0.0 --tcp-port 5000
+```
+
+Frontend:
+
+```powershell
+cd ChatCriptografado\frontend
+npm run dev
+```
+
+Abrir `http://localhost:5173` e clicar em **Iniciar servidor**.
+
+### Bob (Gabriel Mussatto)
+
+Backend (troque `<IP_TAILSCALE_ALICE>` pelo IP atual da Alice na rede privada):
+
+```powershell
+cd ChatCriptografado\backend
+.\.venv\Scripts\Activate.ps1
+python .\run_gui.py --role bob --peer-host <IP_TAILSCALE_ALICE> --tcp-port 5000
+```
+
+Frontend:
+
+```powershell
+cd ChatCriptografado\frontend
+npm run dev
+```
+
+Abrir `http://localhost:5173` e clicar em **Conectar à Alice**.
+
+### Painel criptográfico
+
+Cada mensagem tem o botão **Ver mensagem criptografada**. O painel mostra dados **reais** daquela mensagem:
+
+- texto local (somente nesta máquina)
+- ciphertext Base64
+- RSA-4096, OAEP, SHA-256
+- tamanho em bytes UTF-8 e tamanho do ciphertext (512)
+- chave pública usada na cifra
+- confirmação de que o plaintext **não** foi no pacote TCP
+- ACK: “descriptografada pelo destinatário” só depois da descriptografia real
+
+A chave privada nunca é exibida. Base64 não é criptografia.
+
+## Teste local no terminal (mesmo computador)
 
 Antes, se ainda não existirem as chaves de simulação do Bob:
 
@@ -139,41 +223,15 @@ python .\generate_bob_test_keys.py
 python -m network.alice_server
 ```
 
-Usa, por padrão, `127.0.0.1:5000` e `backend/keys/`.
-
 **Terminal 2 — Bob simulado**
 
 ```powershell
 python -m network.bob_client --keys-dir test_keys/bob
 ```
 
-O argumento `--keys-dir test_keys/bob` faz o cliente usar o par de **teste**, para não misturar com as chaves reais da Alice.
-
 Para encerrar a conversa, digite `/sair`.
 
-## Execução real (dois computadores)
-
-Ainda sem IP definitivo. Posteriormente os computadores serão ligados por uma rede privada.
-
-**Alice (servidor)**
-
-```powershell
-python -m network.alice_server --host 0.0.0.0 --port 5000
-```
-
-`0.0.0.0` faz o servidor aceitar conexões da rede, não apenas de `127.0.0.1`.
-
-**Bob (cliente), no computador do Mussatto**
-
-```powershell
-python -m network.bob_client --host <IP_DA_ALICE> --port 5000
-```
-
-No PC do Bob, `--keys-dir` não precisa ser informado: o padrão é `backend/keys/`, onde estarão as chaves geradas por ele.
-
-## Argumentos
-
-Tanto o servidor quanto o cliente aceitam:
+## Argumentos do terminal TCP
 
 | Argumento | Padrão | Função |
 | --- | --- | --- |
@@ -189,9 +247,10 @@ Tanto o servidor quanto o cliente aceitam:
 - **SHA-256** é o hash usado dentro do OAEP (e no MGF1).
 - A **chave pública** pode ser compartilhada com o outro participante.
 - A **chave privada** permanece somente no computador de quem a gerou.
-- **Base64 não é criptografia.** Serve só para representar os bytes RSA em texto, para o JSON e, no futuro, para a interface.
-- A mensagem original **não trafega** no pacote TCP. O JSON `encrypted_message` contém apenas `type`, `sender`, `recipient` e `ciphertext`.
-- Com RSA-4096 + OAEP/SHA-256, o texto em claro tem limite aproximado de **446 bytes UTF-8** por mensagem (acentos e emojis contam como mais de um byte).
+- **Base64 não é criptografia.** Serve só para representar os bytes RSA em texto, no JSON e no painel da interface.
+- A mensagem original **não trafega** no pacote TCP. O JSON `encrypted_message` contém `type`, `sender`, `recipient`, `ciphertext` e, na interface, `message_id`.
+- O `message_ack` confirma descriptografia real. Não leva plaintext.
+- Com RSA-4096 + OAEP/SHA-256, o texto em claro tem limite aproximado de **446 bytes UTF-8** por mensagem.
 
 Em sistemas reais de grande escala costuma-se usar **criptografia híbrida** (RSA para trocar uma chave simétrica, AES para a mensagem). Este trabalho cifra diretamente com RSA para atender e demonstrar o requisito acadêmico.
 
@@ -202,6 +261,7 @@ A partir de `backend/`, com o ambiente virtual ativo:
 ```powershell
 python .\test_rsa.py
 python .\test_alice_bob.py
+python .\test_chat_runtime.py
 ```
 
-O segundo teste usa `backend/keys/` (Alice) e `backend/test_keys/bob/` (Bob simulado). As chaves de teste não são as chaves reais do Mussatto.
+O segundo e o terceiro testes usam `backend/keys/` (Alice) e `backend/test_keys/bob/` (Bob simulado). As chaves de teste não são as chaves reais do Mussatto.

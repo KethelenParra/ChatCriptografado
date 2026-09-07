@@ -28,6 +28,7 @@ para preservar o teste anterior (test_rsa.py).
 from __future__ import annotations
 
 import base64
+import hashlib
 from pathlib import Path
 
 from cryptography.exceptions import InvalidKey
@@ -285,6 +286,16 @@ def encrypt_message(message: str) -> bytes:
 def decrypt_message(encrypted_message: bytes) -> str:
     """Decifra os bytes RSA com a chave privada da Alice."""
     return decrypt_message_with_private_key(encrypted_message, PRIVATE_KEY_PATH)
+
+
+def public_key_fingerprint(pem_text: str) -> str:
+    """Calcula um fingerprint SHA-256 curto da chave pública PEM.
+
+    Serve para a interface mostrar que a chave remota chegou, sem
+    exibir o PEM inteiro. Nunca se aplica à chave privada.
+    """
+    digest = hashlib.sha256(pem_text.encode("utf-8")).hexdigest().upper()
+    return ":".join(digest[index : index + 2] for index in range(0, 16, 2))
 
 
 def encrypted_bytes_to_base64(encrypted_data: bytes) -> str:

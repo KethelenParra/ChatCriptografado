@@ -1,0 +1,161 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f141c;
+  --panel: #171e29;
+  --panel-2: #1d2633;
+  --line: #2b3647;
+  --text: #e8eef6;
+  --muted: #9aa8bb;
+  --accent: #7eb6d9;
+  --good: #7dcea0;
+  --warn: #e7b56a;
+  --bad: #d98989;
+  font-family: "Segoe UI", "Calibri", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+
+.shell {
+  min-height: 100%;
+  display: grid;
+  grid-template-rows: auto auto auto 1fr auto;
+}
+
+.header, .connection-panel, .composer, .banner {
+  padding: 1rem 1.4rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--panel);
+}
+.header h1 { margin: 0; font-size: 1.25rem; letter-spacing: 0.04em; }
+.subtle { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.85rem; }
+.header-meta { display: flex; gap: 1rem; align-items: center; }
+
+.status-pill {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.85rem;
+}
+.status-connected { color: var(--good); }
+.status-waiting, .status-connecting { color: var(--warn); }
+.status-disconnected, .status-error { color: var(--bad); }
+
+.connection-panel {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  background: var(--panel-2);
+  flex-wrap: wrap;
+}
+.connection-panel p { margin: 0.2rem 0; }
+.label { color: var(--muted); display: inline-block; min-width: 12.5rem; }
+.fingerprint { font-size: 0.8rem; color: var(--muted); }
+.connection-actions { display: flex; gap: 0.6rem; align-items: center; }
+
+button {
+  background: var(--accent);
+  color: #10202c;
+  border: 0;
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+button.linkish {
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  font-weight: 500;
+}
+
+.banner {
+  display: flex;
+  justify-content: space-between;
+  background: #2a2230;
+  color: #f3d5d5;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  min-height: 0;
+}
+@media (max-width: 960px) {
+  .workspace { grid-template-columns: 1fr; }
+}
+
+.chat-panel, .crypto-panel {
+  padding: 1rem 1.4rem;
+  overflow: auto;
+}
+.chat-panel { border-right: 1px solid var(--line); }
+.crypto-panel { background: #141b24; }
+h2 { margin-top: 0; font-size: 1rem; color: var(--muted); font-weight: 600; }
+.placeholder { color: var(--muted); }
+
+.chat-log { display: flex; flex-direction: column; gap: 0.8rem; }
+.bubble {
+  max-width: 78%;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  padding: 0.7rem 0.85rem;
+}
+.bubble.sent { margin-left: auto; background: #1f3344; }
+.bubble.received { margin-right: auto; }
+.bubble.selected { border-color: var(--accent); }
+.bubble header { display: flex; justify-content: space-between; gap: 1rem; color: var(--muted); font-size: 0.8rem; }
+.bubble p { margin: 0.4rem 0 0.55rem; }
+
+.crypto-panel dl { margin: 0; display: grid; gap: 0.7rem; }
+.crypto-panel dt { color: var(--muted); font-size: 0.78rem; }
+.crypto-panel dd { margin: 0.15rem 0 0; }
+.crypto-panel pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #0d1218;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  padding: 0.7rem;
+  font-size: 0.75rem;
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.8rem;
+  background: var(--panel);
+}
+.composer textarea {
+  width: 100%;
+  resize: none;
+  background: #10161e;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  padding: 0.7rem;
+  font: inherit;
+}
+.composer-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.35rem;
+  min-width: 8rem;
+}
+.warn { color: var(--warn); }
+small { color: var(--warn); }

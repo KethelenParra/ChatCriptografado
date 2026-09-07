@@ -24,8 +24,13 @@ MAX_PAYLOAD_BYTES = 1_000_000
 PACKET_PUBLIC_KEY = "public_key"
 PACKET_ENCRYPTED_MESSAGE = "encrypted_message"
 PACKET_DISCONNECT = "disconnect"
+PACKET_MESSAGE_ACK = "message_ack"
 
-ENCRYPTED_MESSAGE_FIELDS = ("type", "sender", "recipient", "ciphertext")
+# Campos obrigatórios do ciphertext. message_id é opcional para
+# compatibilidade com os scripts de terminal, e obrigatório no runtime GUI.
+ENCRYPTED_MESSAGE_REQUIRED_FIELDS = ("type", "sender", "recipient", "ciphertext")
+ENCRYPTED_MESSAGE_ALLOWED_FIELDS = ENCRYPTED_MESSAGE_REQUIRED_FIELDS + ("message_id",)
+MESSAGE_ACK_FIELDS = ("type", "message_id", "sender", "recipient", "status")
 FORBIDDEN_PLAINTEXT_FIELDS = (
     "message",
     "plaintext",
@@ -147,13 +152,37 @@ def build_encrypted_message_packet(
     sender: str,
     recipient: str,
     ciphertext_base64: str,
+    message_id: str | None = None,
 ) -> dict:
-    """Monta o pacote de mensagem. Só metadados e o ciphertext em Base64."""
-    return {
+    """Monta o pacote de mensagem. Só metadados e o ciphertext em Base64.
+
+    O texto original nunca entra neste dicionário. message_id é metadado
+    para o ACK de descriptografia da interface gráfica.
+    """
+    packet = {
         "type": PACKET_ENCRYPTED_MESSAGE,
         "sender": sender,
         "recipient": recipient,
         "ciphertext": ciphertext_base64,
+    }
+    if message_id:
+        packet["message_id"] = message_id
+    return packet
+
+
+def build_message_ack_packet(
+    sender: str,
+    recipient: str,
+    message_id: str,
+    status: str = "decrypted",
+) -> dict:
+    """Confirma que o destinatário descriptografou a mensagem com sucesso."""
+    return {
+        "type": PACKET_MESSAGE_ACK,
+        "message_id": message_id,
+        "sender": sender,
+        "recipient": recipient,
+        "status": status,
     }
 
 
@@ -176,6 +205,8 @@ def _validate_outgoing_packet(data: dict) -> None:
             )
     elif packet_type == PACKET_DISCONNECT:
         return
+    elif packet_type == PACKET_MESSAGE_ACK:
+        _assert_message_ack_shape(data)
     else:
         raise ProtocolError(f"Tipo de pacote de saída desconhecido: {packet_type!r}")
 
@@ -186,6 +217,7 @@ def _validate_incoming_packet(data: dict) -> None:
         PACKET_PUBLIC_KEY,
         PACKET_ENCRYPTED_MESSAGE,
         PACKET_DISCONNECT,
+        PACKET_MESSAGE_ACK,
     }:
         raise ProtocolError(f"Tipo de pacote recebido desconhecido: {packet_type!r}")
 
@@ -198,6 +230,8 @@ def _validate_incoming_packet(data: dict) -> None:
 
     if packet_type == PACKET_ENCRYPTED_MESSAGE:
         _assert_encrypted_message_shape(data)
+    elif packet_type == PACKET_MESSAGE_ACK:
+        _assert_message_ack_shape(data)
     elif packet_type == PACKET_PUBLIC_KEY:
         pem = data.get("public_key")
         if not isinstance(pem, str) or pem.strip() == "":
@@ -209,8 +243,8 @@ def _validate_incoming_packet(data: dict) -> None:
 
 
 def _assert_encrypted_message_shape(data: dict) -> None:
-    extra = set(data.keys()) - set(ENCRYPTED_MESSAGE_FIELDS)
-    missing = set(ENCRYPTED_MESSAGE_FIELDS) - set(data.keys())
+    extra = set(data.keys()) - set(ENCRYPTED_MESSAGE_ALLOWED_FIELDS)
+    missing = set(ENCRYPTED_MESSAGE_REQUIRED_FIELDS) - set(data.keys())
     if missing:
         raise ProtocolError(
             "Pacote encrypted_message incompleto. "
@@ -219,8 +253,30 @@ def _assert_encrypted_message_shape(data: dict) -> None:
     if extra:
         raise ProtocolError(
             "Pacote encrypted_message contém campos extras. "
-            "Somente type, sender, recipient e ciphertext são permitidos. "
+            "Permitidos: type, sender, recipient, ciphertext e message_id. "
             f"Campos extras: {', '.join(sorted(extra))}."
         )
     if not isinstance(data["ciphertext"], str) or data["ciphertext"].strip() == "":
         raise ProtocolError("O campo ciphertext precisa ser uma string Base64.")
+    message_id = data.get("message_id")
+    if message_id is not None and (not isinstance(message_id, str) or not message_id.strip()):
+        raise ProtocolError("O campo message_id precisa ser um texto não vazio.")
+
+
+def _assert_message_ack_shape(data: dict) -> None:
+    extra = set(data.keys()) - set(MESSAGE_ACK_FIELDS)
+    missing = set(MESSAGE_ACK_FIELDS) - set(data.keys())
+    if missing:
+        raise ProtocolError(
+            "Pacote message_ack incompleto. "
+            f"Campos ausentes: {', '.join(sorted(missing))}."
+        )
+    if extra:
+        raise ProtocolError(
+            "Pacote message_ack contém campos extras. "
+            f"Campos extras: {', '.join(sorted(extra))}."
+        )
+    if data.get("status") != "decrypted":
+        raise ProtocolError("O ACK só pode confirmar status 'decrypted'.")
+    if not isinstance(data.get("message_id"), str) or not data["message_id"].strip():
+        raise ProtocolError("O ACK precisa identificar a mensagem.")
