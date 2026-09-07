@@ -1,34 +1,58 @@
+function KeyState({ ok, okLabel, waitLabel }) {
+  return (
+    <span className={ok ? "ok" : "muted"}>
+      {ok ? okLabel : waitLabel}
+    </span>
+  );
+}
+
 export default function ConnectionPanel({ status, onConnect, onDisconnect }) {
   const role = status?.role;
   const connection = status?.connection_status || "disconnected";
   const canStart = connection === "disconnected" || connection === "error";
+  const showDisconnect = connection === "connected" || connection === "waiting";
 
   return (
-    <section className="connection-panel">
-      <div>
-        <p><span className="label">Papel</span> {role === "alice" ? "Servidor TCP" : "Cliente TCP"}</p>
-        <p><span className="label">Porta</span> {status?.tcp_port || 5000}</p>
-        <p><span className="label">Chave RSA local</span> {status?.local_key_loaded ? "Carregada ✅" : "Ausente"}</p>
-        <p><span className="label">Chave privada local</span> {status?.private_key_available ? "Disponível" : "Ausente"}</p>
-        <p><span className="label">Chave pública do outro</span> {status?.peer_key_received ? "Recebida ✅" : "Aguardando"}</p>
-        {status?.peer_public_fingerprint ? (
-          <p className="fingerprint">Fingerprint: {status.peer_public_fingerprint}</p>
-        ) : null}
-      </div>
-      <div className="connection-actions">
+    <section className="toolbar">
+      <ul className="meta-row">
+        <li>
+          <span>Função</span>
+          {role === "alice" ? "Servidor TCP" : "Cliente TCP"}
+        </li>
+        <li>
+          <span>Porta</span>
+          {status?.tcp_port || 5000}
+        </li>
+        <li>
+          <span>Cifra</span>
+          RSA-4096, OAEP, SHA-256
+        </li>
+        <li>
+          <span>Chaves locais</span>
+          <KeyState ok={status?.local_key_loaded} okLabel="Prontas" waitLabel="Ausentes" />
+        </li>
+        <li>
+          <span>Pública remota</span>
+          <KeyState ok={status?.peer_key_received} okLabel="Recebida" waitLabel="Pendente" />
+        </li>
+      </ul>
+      {status?.peer_public_fingerprint ? (
+        <p className="fingerprint">Fingerprint da pública remota {status.peer_public_fingerprint}</p>
+      ) : null}
+      <div className="toolbar-actions">
         {role === "alice" && connection !== "connected" ? (
-          <button type="button" onClick={onConnect} disabled={!canStart}>
-            {connection === "waiting" ? "Aguardando Bob..." : "Iniciar servidor"}
+          <button type="button" className="primary" onClick={onConnect} disabled={!canStart}>
+            {connection === "waiting" ? "Aguardando conexão" : "Iniciar servidor"}
           </button>
         ) : null}
         {role === "bob" && connection !== "connected" ? (
-          <button type="button" onClick={onConnect} disabled={connection === "connecting"}>
-            {connection === "connecting" ? "Conectando..." : "Conectar à Alice"}
+          <button type="button" className="primary" onClick={onConnect} disabled={connection === "connecting"}>
+            {connection === "connecting" ? "Conectando" : "Conectar à Alice"}
           </button>
         ) : null}
-        {connection === "connected" || connection === "waiting" ? (
+        {showDisconnect ? (
           <button type="button" className="ghost" onClick={onDisconnect}>
-            Desconectar
+            Encerrar sessão
           </button>
         ) : null}
       </div>

@@ -33,17 +33,17 @@ export default function MessageInput({ disabled, onSend }) {
         value={text}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Digite sua mensagem..."
+        placeholder={disabled ? "Conecte-se para escrever" : "Escrever mensagem"}
         disabled={disabled}
-        rows={2}
+        rows={1}
       />
-      <div className="composer-side">
-        <span className={tooLong ? "warn" : ""}>
+      <div className="composer-meta">
+        <span className={tooLong ? "warn" : "count"}>
           {bytes} / {MAX_BYTES} bytes
         </span>
-        {tooLong ? <small>A mensagem excede 446 bytes UTF-8.</small> : null}
-        <button type="submit" disabled={disabled || empty || tooLong}>
-          ➤
+        {tooLong ? <span className="warn">Limite UTF-8 excedido</span> : null}
+        <button type="submit" className="primary compact" disabled={disabled || empty || tooLong}>
+          Enviar
         </button>
       </div>
     </form>

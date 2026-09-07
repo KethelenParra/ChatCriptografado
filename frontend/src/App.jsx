@@ -10,11 +10,6 @@ export default function App() {
   const { connected, status, messages, error, sendAction, clearError } = useChatSocket();
   const [selectedMessage, setSelectedMessage] = useState(null);
   const tcpReady = status?.connection_status === "connected";
-
-  function handleSelect(message) {
-    setSelectedMessage(message);
-  }
-
   const selected = messages.find((item) => item.message_id === selectedMessage?.message_id) || null;
 
   return (
@@ -26,18 +21,20 @@ export default function App() {
         onDisconnect={() => sendAction({ action: "disconnect" })}
       />
       {error ? (
-        <div className="banner" role="alert">
+        <div className="notice notice-error" role="alert">
           <span>{error}</span>
-          <button type="button" className="linkish" onClick={clearError}>
-            Fechar
+          <button type="button" className="text-btn" onClick={clearError}>
+            Dispensar
           </button>
         </div>
       ) : null}
       {!connected ? (
-        <div className="banner">Aguardando o FastAPI local em 127.0.0.1:8000...</div>
+        <div className="notice">
+          A interface local ainda não alcançou o FastAPI em 127.0.0.1:8000.
+        </div>
       ) : null}
       <main className="workspace">
-        <ChatPanel messages={messages} selectedMessage={selected} onSelect={handleSelect} />
+        <ChatPanel messages={messages} selectedMessage={selected} onSelect={setSelectedMessage} />
         <CryptoPanel message={selected} />
       </main>
       <MessageInput

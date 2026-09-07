@@ -19,8 +19,8 @@ export default function MessageBubble({ message, selected, onSelect }) {
         <time>{formatTime(message.timestamp)}</time>
       </header>
       <p>{message.plaintext}</p>
-      <button type="button" className="linkish" onClick={() => onSelect(message)}>
-        🔐 Ver mensagem criptografada
+      <button type="button" className="text-btn" onClick={() => onSelect(message)}>
+        Inspecionar cifra
       </button>
     </article>
   );

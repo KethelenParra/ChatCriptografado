@@ -3,22 +3,23 @@ export default function Header({ status }) {
   const connection = status?.connection_status || "disconnected";
   const labels = {
     connected: "Conectado",
-    waiting: "Aguardando Bob",
+    waiting: "Aguardando o outro participante",
     connecting: "Conectando",
     disconnected: "Desconectado",
-    error: "Erro",
+    error: "Erro de conexão",
   };
 
   return (
     <header className="header">
-      <div>
-        <h1>🔐 RSA CHAT</h1>
-        <p className="subtle">RSA-4096 • OAEP • SHA-256</p>
+      <div className="brand">
+        <p className="brand-kicker">Atividade acadêmica · TCP + RSA</p>
+        <h1>Chat Criptografado</h1>
       </div>
       <div className="header-meta">
-        <strong>{localUser}</strong>
-        <span className={`status-pill status-${connection}`}>
-          ● {labels[connection] || connection}
+        <span className="who">{localUser}</span>
+        <span className={`status status-${connection}`}>
+          <i />
+          {labels[connection] || connection}
         </span>
       </div>
     </header>

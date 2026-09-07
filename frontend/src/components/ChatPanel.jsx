@@ -3,10 +3,16 @@ import MessageBubble from "./MessageBubble.jsx";
 export default function ChatPanel({ messages, selectedMessage, onSelect }) {
   return (
     <section className="chat-panel">
-      <h2>Chat</h2>
+      <header className="pane-head">
+        <h2>Conversa</h2>
+        <p>As mensagens ficam apenas nesta sessão do navegador.</p>
+      </header>
       <div className="chat-log">
         {messages.length === 0 ? (
-          <p className="placeholder">Nenhuma mensagem ainda. A conversa permanece só na memória desta página.</p>
+          <div className="empty">
+            <p>Nenhuma mensagem nesta sessão.</p>
+            <p>Inicie a conexão TCP e envie a primeira linha pelo campo abaixo.</p>
+          </div>
         ) : (
           messages.map((message) => (
             <MessageBubble
